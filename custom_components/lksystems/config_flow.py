@@ -145,7 +145,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         config_entry: ConfigEntry,
     ) -> OptionsFlow:
         """Create the options flow."""
-        return OptionsFlowHandler(config_entry)
+        # Modern HA injects config_entry on the OptionsFlow automatically;
+        # the handler must be constructed with no arguments.
+        return OptionsFlowHandler()
 
 
 class OptionsFlowHandler(OptionsFlow):
