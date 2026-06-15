@@ -89,8 +89,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
-        errors: dict[str, str] = {}
-
         if user_input is not None:
             # Check if we already have an entry for this username
             existing_entries = self._async_current_entries()
@@ -108,9 +106,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 data=user_input,
             )
 
-        return self.async_show_form(
-            step_id="user", data_schema=USER_SCHEMA, errors=errors
-        )
+        return self.async_show_form(step_id="user", data_schema=USER_SCHEMA)
 
     @staticmethod
     @callback
@@ -134,9 +130,16 @@ class OptionsFlowHandler(OptionsFlow):
         # Pre-fill using the same precedence the coordinator reads
         # (options -> initial setup data -> default), so opening and submitting
         # the form does not silently overwrite an interval chosen at setup.
-        update_interval = self.config_entry.options.get(
-            CONF_UPDATE_INTERVAL,
-            self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        update_interval = max(
+            1,
+            int(
+                self.config_entry.options.get(
+                    CONF_UPDATE_INTERVAL,
+                    self.config_entry.data.get(
+                        CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL
+                    ),
+                )
+            ),
         )
 
         return self.async_show_form(
