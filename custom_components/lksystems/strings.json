@@ -11,10 +11,9 @@
             },
             "reauth_confirm": {
                 "data": {
-                    "username": "[%key:common::config_flow::data::username%]",
                     "password": "[%key:common::config_flow::data::password%]"
                 },
-                "description": "The stored credentials for {name} are no longer valid. Please re-enter your LK Systems username and password.",
+                "description": "The stored password for {username} is no longer valid. Please re-enter the password for this LK Systems account.",
                 "title": "Reauthenticate LK Systems"
             }
         },

@@ -189,9 +189,14 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         """Initialize the coordinator."""
-        # Always convert to integer in case it comes as string from config
+        # Prefer the options-flow value (where the UI writes it), falling back
+        # to the initial config data, then the default. Always convert to int
+        # in case it comes as a string from config.
         update_interval_minutes = int(
-            entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
+            entry.options.get(
+                CONF_UPDATE_INTERVAL,
+                entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+            )
         )
 
         _LOGGER.warning(
