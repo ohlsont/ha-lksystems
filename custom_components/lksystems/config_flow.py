@@ -20,11 +20,17 @@ from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 _LOGGER = logging.getLogger(__name__)
 
 # Define schemas outside of async functions
+# The update interval must be at least 1 minute; 0 would make the data
+# coordinator poll the LK cloud API in a tight loop.
+UPDATE_INTERVAL_VALIDATOR = vol.All(vol.Coerce(int), vol.Range(min=1))
+
 USER_SCHEMA = vol.Schema(
     {
         vol.Required(CONF_USERNAME): cv.string,
         vol.Required(CONF_PASSWORD): cv.string,
-        vol.Optional(CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL): cv.positive_int,
+        vol.Optional(
+            CONF_UPDATE_INTERVAL, default=DEFAULT_UPDATE_INTERVAL
+        ): UPDATE_INTERVAL_VALIDATOR,
     }
 )
 
@@ -56,7 +62,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             credentials = {
-                CONF_USERNAME: reauth_entry.data[CONF_USERNAME],
+                CONF_USERNAME: reauth_entry.data.get(CONF_USERNAME, ""),
                 CONF_PASSWORD: user_input[CONF_PASSWORD],
             }
             try:
@@ -92,18 +98,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 if entry.data.get(CONF_USERNAME) == user_input[CONF_USERNAME]:
                     return self.async_abort(reason="already_configured")
 
-            try:
-                await validate_input(self.hass, user_input)
-            except InvalidAuth:
-                errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Unexpected error during setup")
-                errors["base"] = "unknown"
-            else:
-                return self.async_create_entry(
-                    title=f"LK Systems ({user_input[CONF_USERNAME]})",
-                    data=user_input,
-                )
+            # Credentials are not validated here: the LK cloud client collapses
+            # connectivity errors and auth failures into the same result, so
+            # validating at setup would block onboarding during a transient
+            # outage with a misleading "invalid auth" error. A wrong password
+            # instead surfaces via the reauth flow on the first refresh.
+            return self.async_create_entry(
+                title=f"LK Systems ({user_input[CONF_USERNAME]})",
+                data=user_input,
+            )
 
         return self.async_show_form(
             step_id="user", data_schema=USER_SCHEMA, errors=errors
@@ -128,17 +131,21 @@ class OptionsFlowHandler(OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(title="", data=user_input)
 
-        # Get current options or provide defaults
-        options = self.config_entry.options or {}
-        update_interval = options.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL)
-        
+        # Pre-fill using the same precedence the coordinator reads
+        # (options -> initial setup data -> default), so opening and submitting
+        # the form does not silently overwrite an interval chosen at setup.
+        update_interval = self.config_entry.options.get(
+            CONF_UPDATE_INTERVAL,
+            self.config_entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+        )
+
         return self.async_show_form(
             step_id="init",
             data_schema=vol.Schema(
                 {
                     vol.Required(
                         CONF_UPDATE_INTERVAL, default=update_interval
-                    ): cv.positive_int,
+                    ): UPDATE_INTERVAL_VALIDATOR,
                 }
             ),
         )

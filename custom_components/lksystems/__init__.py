@@ -191,12 +191,17 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         """Initialize the coordinator."""
         # Prefer the options-flow value (where the UI writes it), falling back
         # to the initial config data, then the default. Always convert to int
-        # in case it comes as a string from config.
-        update_interval_minutes = int(
-            entry.options.get(
-                CONF_UPDATE_INTERVAL,
-                entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
-            )
+        # in case it comes as a string from config, and clamp to a minimum of 1
+        # minute so a stray 0 can never make the coordinator poll in a tight
+        # loop.
+        update_interval_minutes = max(
+            1,
+            int(
+                entry.options.get(
+                    CONF_UPDATE_INTERVAL,
+                    entry.data.get(CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL),
+                )
+            ),
         )
 
         _LOGGER.warning(
