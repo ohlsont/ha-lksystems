@@ -774,19 +774,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up LK Systems from a config entry."""
     coordinator = LKSystemCoordinator(hass, entry)
 
-    # Fetch initial data so we have data when entities subscribe
-    try:
-        await coordinator.async_config_entry_first_refresh()
-    except ConfigEntryAuthFailed:
-        # If we get an auth error, we'll try to reauth
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": "reauth"},
-                data=entry.data,
-            )
-        )
-        return False
+    # Fetch initial data so we have data when entities subscribe.
+    # If authentication fails, let ConfigEntryAuthFailed propagate: Home
+    # Assistant then starts a reauth flow with the correct context (including
+    # entry_id), which async_step_reauth_confirm needs to locate and update the
+    # entry. Starting a context-less reauth flow here left the reauth step
+    # unable to save new credentials.
+    await coordinator.async_config_entry_first_refresh()
 
     hass.data[DOMAIN][entry.entry_id] = coordinator
 

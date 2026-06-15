@@ -8,6 +8,14 @@
                 },
                 "description": "Please enter the username and password for your LK Systems account",
                 "title": "LK Systems"
+            },
+            "reauth_confirm": {
+                "data": {
+                    "username": "[%key:common::config_flow::data::username%]",
+                    "password": "[%key:common::config_flow::data::password%]"
+                },
+                "description": "The stored credentials for {name} are no longer valid. Please re-enter your LK Systems username and password.",
+                "title": "Reauthenticate LK Systems"
             }
         },
         "error": {
@@ -16,9 +24,17 @@
             "unknown": "[%key:common::config_flow::error::unknown%]"
         },
         "abort": {
-            "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+            "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+            "reauth_successful": "[%key:common::config_flow::abort::reauth_successful%]"
+        }
+    },
+    "options": {
+        "step": {
+            "init": {
+                "data": {
+                    "update_interval": "Update interval (minutes)"
+                }
+            }
         }
     }
 }
-  
-  

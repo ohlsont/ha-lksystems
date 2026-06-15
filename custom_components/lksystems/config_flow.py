@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
+from typing import Any
 
 import voluptuous as vol
 
@@ -28,15 +28,7 @@ USER_SCHEMA = vol.Schema(
     }
 )
 
-REAUTH_SCHEMA = vol.Schema(
-    {
-        vol.Required(CONF_USERNAME): cv.string,
-        vol.Required(CONF_PASSWORD): cv.string,
-    }
-)
-
-
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate that the user input allows us to connect to LK Systems."""
     async with LKSystemsManager(data[CONF_USERNAME], data[CONF_PASSWORD]) as lk_inst:
         if not await lk_inst.login():
@@ -47,76 +39,43 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for LK Systems."""
 
     VERSION = 1
-    
-    # Store entry_id for reauth
-    _entry_id = None
 
-    async def async_step_reauth(self, user_input=None):
-        """Handle reauth when authentication fails."""
-        # Store entry ID from context
-        if self.context.get("entry_id"):
-            self._entry_id = self.context["entry_id"]
-            
-        # Get existing entry
-        entry = None
-        if self._entry_id:
-            entry = self.hass.config_entries.async_get_entry(self._entry_id)
-        
-        if user_input is None:
-            # Show initial form with existing username
-            default_username = ""
-            if entry and entry.data.get(CONF_USERNAME):
-                default_username = entry.data.get(CONF_USERNAME)
-                
-            return self.async_show_form(
-                step_id="reauth",
-                data_schema=vol.Schema(
-                    {
-                        vol.Required(CONF_USERNAME, default=default_username): cv.string,
-                        vol.Required(CONF_PASSWORD): cv.string,
-                    }
-                ),
-                description_placeholders={"reason": "Authentication failed"},
-            )
+    async def async_step_reauth(self, entry_data):
+        """Handle reauth upon an authentication error."""
+        return await self.async_step_reauth_confirm()
 
-        # Validate the credentials
-        try:
-            await validate_input(self.hass, user_input)
-        except InvalidAuth:
-            return self.async_show_form(
-                step_id="reauth",
-                data_schema=REAUTH_SCHEMA,
-                errors={"base": "invalid_auth"},
-            )
-        except Exception:
-            return self.async_show_form(
-                step_id="reauth",
-                data_schema=REAUTH_SCHEMA,
-                errors={"base": "unknown"},
-            )
+    async def async_step_reauth_confirm(self, user_input=None):
+        """Confirm reauth by re-entering credentials."""
+        reauth_entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
 
-        # Update entry with new credentials
-        if self._entry_id:
-            entry = self.hass.config_entries.async_get_entry(self._entry_id)
-            if entry:
-                # Create updated data
-                entry_data = {
-                    **entry.data,
-                    CONF_USERNAME: user_input[CONF_USERNAME],
-                    CONF_PASSWORD: user_input[CONF_PASSWORD],
-                }
-                
-                # Update the entry
-                self.hass.config_entries.async_update_entry(entry, data=entry_data)
-                
-                # Reload the config entry to apply new credentials
-                self.hass.async_create_task(
-                    self.hass.config_entries.async_reload(self._entry_id)
+        if user_input is not None:
+            try:
+                await validate_input(self.hass, user_input)
+            except InvalidAuth:
+                errors["base"] = "invalid_auth"
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Unexpected error during reauth")
+                errors["base"] = "unknown"
+            else:
+                return self.async_update_reload_and_abort(
+                    reauth_entry, data_updates=user_input
                 )
-                
-                return self.async_abort(reason="reauth_successful")
-                
-        return self.async_abort(reason="reauth_failed")
+
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(
+                        CONF_USERNAME,
+                        default=reauth_entry.data.get(CONF_USERNAME, ""),
+                    ): cv.string,
+                    vol.Required(CONF_PASSWORD): cv.string,
+                }
+            ),
+            errors=errors,
+            description_placeholders={"name": reauth_entry.title},
+        )
 
     async def async_step_user(self, user_input=None):
         """Handle the initial step."""
