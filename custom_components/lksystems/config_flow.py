@@ -1,10 +1,9 @@
 """Config flow for LK Systems integration."""
+
 from __future__ import annotations
 
 import logging
 from typing import Any
-
-import voluptuous as vol
 
 from homeassistant import config_entries
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
@@ -12,10 +11,12 @@ from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
 import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
+
+from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 # Import at the module level
 from .pylksystems import LKSystemsManager
-from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ USER_SCHEMA = vol.Schema(
         ): UPDATE_INTERVAL_VALIDATOR,
     }
 )
+
 
 async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Validate that the user input allows us to connect to LK Systems."""
@@ -69,7 +71,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 await validate_input(self.hass, credentials)
             except InvalidAuth:
                 errors["base"] = "invalid_auth"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected error during reauth")
                 errors["base"] = "unknown"
             else:

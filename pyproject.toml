@@ -1,0 +1,48 @@
+[dependency-groups]
+# Install with `uv sync` (or `pip install ruff==0.15.20`). Keep the version in
+# sync with .pre-commit-config.yaml and .github/workflows/lint.yml.
+dev = ["ruff==0.15.20"]
+
+[tool.ruff]
+# Astral Ruff — linter + formatter for the LK Systems custom component.
+# Target the lowest Python version Home Assistant 2025.1 supports.
+target-version = "py312"
+line-length = 88
+src = ["custom_components"]
+
+[tool.ruff.lint]
+# A pragmatic subset modelled on Home Assistant core's own Ruff config.
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+    "ASYNC", # flake8-async
+    "SIM",  # flake8-simplify
+    "RUF",  # Ruff-specific rules
+]
+ignore = [
+    "E501",   # line length is handled by the formatter
+    "B008",   # function calls in argument defaults (common in HA schemas)
+    "SIM105", # contextlib.suppress is not always clearer than try/except
+    "SIM102", # layered guard clauses are intentional in the device-matching code
+    "RUF012", # mutable _attr_* class defaults are standard Home Assistant idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# The bundled API client mutates broad state and catches broadly by design.
+"custom_components/lksystems/pylksystems/*" = ["B904"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components"]
+combine-as-imports = true
+
+[tool.ruff.lint.mccabe]
+max-complexity = 25
+
+[tool.ruff.format]
+docstring-code-format = true

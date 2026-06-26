@@ -1,0 +1,22 @@
+name: Lint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ruff:
+    name: Ruff (lint + format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Ruff lint
+        run: uvx ruff@0.15.20 check --output-format=github .
+
+      - name: Ruff format
+        run: uvx ruff@0.15.20 format --check --diff .
