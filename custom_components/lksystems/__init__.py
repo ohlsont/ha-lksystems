@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-from typing import TypedDict
-from datetime import timedelta
-import asyncio
 import base64
+from datetime import timedelta
 import json
-from typing import Any, Dict
+import logging
 import time
+from typing import TypedDict
 
 # Make sure jwt is installed using: pip install pyjwt
 try:
@@ -17,33 +15,35 @@ try:
 except ImportError:
     jwt = None
 
-from homeassistant.exceptions import HomeAssistantError, ConfigEntryAuthFailed
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.typing import ConfigType
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
 )
 from homeassistant.util import dt as dt_util
 import voluptuous as vol
-from homeassistant.helpers import config_validation as cv
 
 from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .pylksystems import (
-    LKSystemsManager,
     LKSystemsError,
+    LKSystemsManager,
     LKThresholds,
-    LKPressureThresholds,
 )
-
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
 # Define the platforms we support
 PLATFORMS = [Platform.SENSOR, Platform.CLIMATE]
+
+# The coordinator is stored on the entry via runtime_data (HA's modern pattern),
+# so the entry carries its type. Lazily evaluated, so the forward reference to
+# the coordinator class defined below is fine.
+type LKConfigEntry = ConfigEntry[LKSystemCoordinator]
 
 
 class LkStructureResp(TypedDict):
@@ -216,10 +216,14 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
         self._last_update_time = dt_util.now()
         self._entry_id = entry.entry_id
 
-        # Initialize coordinator with update interval
+        # Initialize coordinator with update interval. Passing config_entry
+        # explicitly is required by recent Home Assistant: the implicit
+        # ContextVar fallback is deprecated and stops working in 2026.8, after
+        # which async_config_entry_first_refresh() would raise without it.
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=DOMAIN,
             update_interval=timedelta(minutes=update_interval_minutes),
         )
@@ -360,7 +364,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
                         # Also update any devices in hub_data
                         if "hub_data" in self.data:
-                            for hub_id, hub_data in self.data["hub_data"].items():
+                            for _hub_id, hub_data in self.data["hub_data"].items():
                                 if isinstance(hub_data, dict) and "devices" in hub_data:
                                     for device in hub_data["devices"]:
                                         if device.get("mac") == device_id:
@@ -379,7 +383,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             _LOGGER.error("Error during forced device update: %s", ex)
             return False
 
-    async def _async_update_data(self) -> LkStructureResp:  # noqa: C901
+    async def _async_update_data(self) -> LkStructureResp:
         """Fetch the latest data from the source."""
         # Record update time at the beginning of update
         self._last_update_time = dt_util.now()
@@ -708,7 +712,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
 
                 # Also get measurements for devices listed in hub data if not already fetched
                 if "hub_data" in resp:
-                    for hub_id, hub_data in resp["hub_data"].items():
+                    for hub_data in resp["hub_data"].values():
                         if isinstance(hub_data, dict) and "devices" in hub_data:
                             for device in hub_data["devices"]:
                                 device_id = device.get("mac")
@@ -774,13 +778,7 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             raise UpdateFailed(str(err)) from err
 
 
-async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the LK Systems component."""
-    hass.data[DOMAIN] = {}
-    return True
-
-
-async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_setup_entry(hass: HomeAssistant, entry: LKConfigEntry) -> bool:
     """Set up LK Systems from a config entry."""
     coordinator = LKSystemCoordinator(hass, entry)
 
@@ -792,7 +790,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # unable to save new credentials.
     await coordinator.async_config_entry_first_refresh()
 
-    hass.data[DOMAIN][entry.entry_id] = coordinator
+    entry.runtime_data = coordinator
 
     # Set up all platforms for this device/entry
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -804,7 +802,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     async def handle_refresh_device(call):
         """Handle the service call to refresh a device."""
         device_id = call.data.get("device_id", None)
-        coordinator = hass.data[DOMAIN][entry.entry_id]
+        coordinator = entry.runtime_data
 
         if device_id:
             # Refresh specific device
@@ -831,9 +829,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+async def async_update_options(hass: HomeAssistant, entry: LKConfigEntry) -> None:
     """Update options."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     # Check if update interval has changed
     old_update_interval = coordinator._update_interval_minutes
@@ -857,14 +855,14 @@ async def async_update_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(hass: HomeAssistant, entry: LKConfigEntry) -> bool:
     """Unload a config entry."""
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
     if unload_ok:
-        # Clear token from cache on unload
+        # Clear token from cache on unload. The coordinator stored in
+        # entry.runtime_data is cleared by Home Assistant automatically.
         TOKEN_STORAGE.pop(entry.entry_id, None)
-        hass.data[DOMAIN].pop(entry.entry_id)
 
     return unload_ok
 

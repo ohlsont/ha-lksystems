@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-import base64
-from datetime import datetime, timedelta
-import json
+from datetime import datetime
 import logging
-import re
 from typing import TypedDict
 
-
 from aiohttp import ClientError, ClientResponseError, ClientSession
-from dateutil.relativedelta import relativedelta
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -882,7 +877,7 @@ class LKSystemsManager:
                 return result
 
         except Exception as ex:
-            result["error"] = f"Exception: {str(ex)}"
+            result["error"] = f"Exception: {ex!s}"
             return result
 
     @property
@@ -977,19 +972,15 @@ class LKSystemsManager:
         """Close valve"""
         endpoint = f"control/cubic/secure/{cubic_identity}/valve/close"
         payload = {}
-        success, res = await self._post(endpoint, payload)
-        if success:
-            return True
-        return False
+        success, _res = await self._post(endpoint, payload)
+        return bool(success)
 
     async def cubic_secure_open_valve(self, cubic_identity: str):
         """Open valve"""
         endpoint = f"control/cubic/secure/{cubic_identity}/valve/open"
         payload = {}
-        success, res = await self._post(endpoint, payload)
-        if success:
-            return True
-        return False
+        success, _res = await self._post(endpoint, payload)
+        return bool(success)
 
     async def cubic_secure_pause_leak_detection(
         self, cubic_identity: str, seconds: int = 3600
@@ -997,10 +988,8 @@ class LKSystemsManager:
         """Pause leak detection for a specified number of seconds (default is 3600 seconds = 1 hour)"""
         endpoint = f"control/cubic/{cubic_identity}/disable-leak-detection"
         payload = {"seconds": seconds}
-        success, res = await self._post(endpoint, payload)
-        if success:
-            return True
-        return False
+        success, _res = await self._post(endpoint, payload)
+        return bool(success)
 
     async def cubic_secure_set_pressure_test_schedule(
         self, cubic_identity: str, hour: int = 4, minute: int = 0
@@ -1008,10 +997,8 @@ class LKSystemsManager:
         """Set pressure test schedule"""
         endpoint = f"control/cubic/secure/{cubic_identity}/pressure-reports/time"
         payload = {"hour": hour, "minute": minute}
-        success, res = await self._post(endpoint, payload)
-        if success:
-            return True
-        return False
+        success, _res = await self._post(endpoint, payload)
+        return bool(success)
 
     async def cubic_secure_set_thresholds(
         self, cubic_identity: str, threshold: LKThresholds
@@ -1019,7 +1006,5 @@ class LKSystemsManager:
         """Set threshold"""
         endpoint = f"control/cubic/secure/{cubic_identity}/threshold"
         payload = threshold
-        success, res = await self._post(endpoint, payload)
-        if success:
-            return True
-        return False
+        success, _res = await self._post(endpoint, payload)
+        return bool(success)

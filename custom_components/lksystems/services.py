@@ -1,4 +1,3 @@
-from .pylksystems import LKSystemsManager, LKThresholds, LKPressureThresholds
 import logging
 
 from homeassistant.config_entries import ConfigEntry
@@ -11,6 +10,7 @@ from homeassistant.helpers import (
 from .const import (
     DOMAIN,
 )
+from .pylksystems import LKPressureThresholds, LKSystemsManager, LKThresholds
 
 _LOGGER = logging.getLogger(__name__)
 

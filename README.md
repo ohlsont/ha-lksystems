@@ -37,3 +37,20 @@ The integration supports:
 ## Enable the integration
 Go to Settings / Devices & Services / Integrations. Click **+ ADD INTEGRATION**
 Follow the instructions
+
+## Development
+Code quality is enforced with [Ruff](https://docs.astral.sh/ruff/) (linter + formatter), run via [uv](https://docs.astral.sh/uv/):
+
+```sh
+uvx ruff check .          # lint
+uvx ruff check --fix .    # lint and apply safe fixes
+uvx ruff format .         # format
+```
+
+Optionally enable the git pre-commit hooks so this runs automatically:
+
+```sh
+uvx pre-commit install
+```
+
+The same checks run in CI on every push and pull request.

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -11,7 +11,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     PERCENTAGE,
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
@@ -22,20 +21,18 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import (
     CoordinatorEntity,
-    DataUpdateCoordinator,
 )
 import homeassistant.util.dt as dt_util
 
-from . import LKSystemCoordinator
+from . import LKConfigEntry, LKSystemCoordinator
 from .const import (
     ATTRIBUTION,
     C_NEXT_UPDATE_TIME,
     C_UPDATE_TIME,
     CUBIC_SECURE_MODEL,
     DOMAIN,
-    INTEGRATION_NAME,
-    LK_CUBICSECURE_SENSORS,
     LK_CUBICSECURE_CONFIG_SENSORS,
+    LK_CUBICSECURE_SENSORS,
     MANUFACTURER,
 )
 
@@ -44,14 +41,13 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: LKConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up LK Systems sensor based on a config entry."""
-    coordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     entities = []
-    processed_devices = set()  # Track processed devices to avoid duplicates
     created_entity_ids = set()  # Track entity IDs to avoid duplicates
 
     # Log all available devices from API response
@@ -141,7 +137,7 @@ async def async_setup_entry(
 
     # Also collect hubs from hub_data
     if coordinator.data.get("hub_data"):
-        for hub_id, hub_data in coordinator.data["hub_data"].items():
+        for hub_id in coordinator.data["hub_data"]:
             if hub_id in hub_map:
                 continue  # Already found this hub
 
@@ -396,9 +392,9 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
         entity_key: str,
         name_suffix: str,
         icon: str,
-        device_class: Optional[str] = None,
-        state_class: Optional[str] = None,
-        unit_of_measurement: Optional[str] = None,
+        device_class: str | None = None,
+        state_class: str | None = None,
+        unit_of_measurement: str | None = None,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
@@ -449,11 +445,6 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
             else:
                 self._attr_name = f"LK Sensor {name_suffix}"
 
-        # Get zone info for naming
-        zone_name = None
-        if "zone" in device_title and device_title["zone"].get("zoneName"):
-            zone_name = device_title["zone"].get("zoneName")
-
         # Set up device info with proper connection to parent if available
         device_info = {
             "identifiers": {(DOMAIN, device_identity)},
@@ -488,7 +479,7 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
 
         # Also check hub_data
         if "hub_data" in self.coordinator.data:
-            for hub_id, hub_data in self.coordinator.data["hub_data"].items():
+            for _hub_id, hub_data in self.coordinator.data["hub_data"].items():
                 if isinstance(hub_data, dict) and "devices" in hub_data:
                     for device in hub_data["devices"]:
                         device_title = device.get("deviceTitle", {})
@@ -562,73 +553,65 @@ class LKArcSensorEntity(CoordinatorEntity, SensorEntity):
             if (
                 device.get("mac") == self._device.get("mac")
                 or device_title.get("identity") == self._device_identity
-            ):
-                if "measurement" in device:
-                    if self._entity_key == "temperature":
-                        # Temperature values need to be divided by 10 to get Celsius
-                        temp_value = device["measurement"].get("currentTemperature")
-                        return (
-                            float(temp_value) / 10 if temp_value is not None else None
-                        )
-                    elif self._entity_key == "humidity":
-                        # Humidity values need to be divided by 10 to get percentage
-                        humid_value = device["measurement"].get("currentHumidity")
-                        return (
-                            float(humid_value) / 10 if humid_value is not None else None
-                        )
-                    elif self._entity_key == "battery":
-                        return device["measurement"].get("currentBattery")
-                    elif self._entity_key == "rssi":
-                        return device["measurement"].get("currentRssi")
-                    elif self._entity_key == "desired_temperature":
-                        # Desired temperature also needs division by 10
-                        temp_value = device["measurement"].get("desiredTemperature")
-                        return (
-                            float(temp_value) / 10 if temp_value is not None else None
-                        )
+            ) and "measurement" in device:
+                if self._entity_key == "temperature":
+                    # Temperature values need to be divided by 10 to get Celsius
+                    temp_value = device["measurement"].get("currentTemperature")
+                    return float(temp_value) / 10 if temp_value is not None else None
+                elif self._entity_key == "humidity":
+                    # Humidity values need to be divided by 10 to get percentage
+                    humid_value = device["measurement"].get("currentHumidity")
+                    return float(humid_value) / 10 if humid_value is not None else None
+                elif self._entity_key == "battery":
+                    return device["measurement"].get("currentBattery")
+                elif self._entity_key == "rssi":
+                    return device["measurement"].get("currentRssi")
+                elif self._entity_key == "desired_temperature":
+                    # Desired temperature also needs division by 10
+                    temp_value = device["measurement"].get("desiredTemperature")
+                    return float(temp_value) / 10 if temp_value is not None else None
 
         # Check hub_data as well for the most up-to-date information
         if "hub_data" in self.coordinator.data:
-            for hub_id, hub_data in self.coordinator.data["hub_data"].items():
+            for _hub_id, hub_data in self.coordinator.data["hub_data"].items():
                 if isinstance(hub_data, dict) and "devices" in hub_data:
                     for device in hub_data["devices"]:
                         device_title = device.get("deviceTitle", {})
                         if (
                             device.get("mac") == self._device.get("mac")
                             or device_title.get("identity") == self._device_identity
-                        ):
-                            if "measurement" in device:
-                                if self._entity_key == "temperature":
-                                    temp_value = device["measurement"].get(
-                                        "currentTemperature"
-                                    )
-                                    return (
-                                        float(temp_value) / 10
-                                        if temp_value is not None
-                                        else None
-                                    )
-                                elif self._entity_key == "humidity":
-                                    humid_value = device["measurement"].get(
-                                        "currentHumidity"
-                                    )
-                                    return (
-                                        float(humid_value) / 10
-                                        if humid_value is not None
-                                        else None
-                                    )
-                                elif self._entity_key == "battery":
-                                    return device["measurement"].get("currentBattery")
-                                elif self._entity_key == "rssi":
-                                    return device["measurement"].get("currentRssi")
-                                elif self._entity_key == "desired_temperature":
-                                    temp_value = device["measurement"].get(
-                                        "desiredTemperature"
-                                    )
-                                    return (
-                                        float(temp_value) / 10
-                                        if temp_value is not None
-                                        else None
-                                    )
+                        ) and "measurement" in device:
+                            if self._entity_key == "temperature":
+                                temp_value = device["measurement"].get(
+                                    "currentTemperature"
+                                )
+                                return (
+                                    float(temp_value) / 10
+                                    if temp_value is not None
+                                    else None
+                                )
+                            elif self._entity_key == "humidity":
+                                humid_value = device["measurement"].get(
+                                    "currentHumidity"
+                                )
+                                return (
+                                    float(humid_value) / 10
+                                    if humid_value is not None
+                                    else None
+                                )
+                            elif self._entity_key == "battery":
+                                return device["measurement"].get("currentBattery")
+                            elif self._entity_key == "rssi":
+                                return device["measurement"].get("currentRssi")
+                            elif self._entity_key == "desired_temperature":
+                                temp_value = device["measurement"].get(
+                                    "desiredTemperature"
+                                )
+                                return (
+                                    float(temp_value) / 10
+                                    if temp_value is not None
+                                    else None
+                                )
 
         return None
 
@@ -713,8 +696,8 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         entity_key: str,
         name_suffix: str,
         icon: str,
-        device_class: Optional[str] = None,
-        state_class: Optional[str] = None,
+        device_class: str | None = None,
+        state_class: str | None = None,
     ) -> None:
         """Initialize the sensor."""
         super().__init__(coordinator)
@@ -769,7 +752,7 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
         self._attr_device_info = DeviceInfo(**device_info)
 
     @property
-    def device_class(self) -> Optional[str]:
+    def device_class(self) -> str | None:
         """Return the device class."""
         return self._device_class
 
@@ -794,11 +777,10 @@ class LKArcHubEntity(CoordinatorEntity, SensorEntity):
             if (
                 device.get("mac") == self._device.get("mac")
                 or device_title.get("identity") == self._device_identity
-            ):
-                if self._entity_key == "status":
-                    # Return connection status if available
-                    if "measurement" in device:
-                        return device["measurement"].get("connectionState", "Unknown")
+            ) and self._entity_key == "status":
+                # Return connection status if available
+                if "measurement" in device:
+                    return device["measurement"].get("connectionState", "Unknown")
 
         # Finally check hub_data - this often has the most up-to-date thermostat information
         if "hub_data" in self.coordinator.data:
