@@ -1,7 +1,7 @@
 [dependency-groups]
-# Install with `uv sync` (or `pip install ruff==0.15.20`). Keep the version in
+# Install with `uv sync` (or `pip install ruff==0.16.0`). Keep the version in
 # sync with .pre-commit-config.yaml and .github/workflows/lint.yml.
-dev = ["ruff==0.15.20"]
+dev = ["ruff==0.16.0"]
 
 [tool.ruff]
 # Astral Ruff — linter + formatter for the LK Systems custom component.

@@ -2,7 +2,7 @@
 # Keep rev in sync with the Ruff version pinned in pyproject.toml / CI.
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.20
+    rev: v0.16.0
     hooks:
       # Lint, applying autofixes where safe.
       - id: ruff
