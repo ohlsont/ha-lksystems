@@ -10,6 +10,27 @@ from aiohttp import ClientError, ClientResponseError, ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 
+# Header names whose values must never reach the log. Matched case-insensitively
+# because the request headers mix casings ("authorization" alongside "Accept").
+_SENSITIVE_HEADERS = frozenset({"authorization", "ocp-apim-subscription-key"})
+
+_REDACTED = "**redacted**"
+
+
+def redact_headers(headers: dict | None) -> dict | None:
+    """Return a copy of headers with credential values masked for logging.
+
+    The request headers carry the account's bearer token, so logging them
+    verbatim writes a usable JWT into home-assistant.log.
+    """
+    if not headers:
+        return headers
+
+    return {
+        key: _REDACTED if key.lower() in _SENSITIVE_HEADERS else value
+        for key, value in headers.items()
+    }
+
 
 # Add the missing LKSystemsError class
 class LKSystemsError(Exception):
@@ -88,7 +109,7 @@ class LKSystemsManager:
         _LOGGER.error(
             "An error occurred during the request. URL: %s, Headers: %s. Error: %s",
             self.base_url + endpoint,
-            headers,
+            redact_headers(headers),
             error,
         )
         return False
