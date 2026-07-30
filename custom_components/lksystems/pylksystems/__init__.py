@@ -84,6 +84,7 @@ class LKSystemsManager:
         self.userid = None
         self.jwt_token = None
         self.refresh_token = None
+        self.access_token_expire = None
         self._cubic_secure_messurement = None
         self._user_structure = None
         self._cubic_secure_configuration = None
@@ -125,7 +126,69 @@ class LKSystemsManager:
             "ocp-apim-subscription-key": "d2d308826cd14e7d92660b28bc7d859c",
         }
 
-    async def _get(self, endpoint):
+    def _store_tokens(self, data):
+        """Persist the token set returned by login or refresh.
+
+        Returns False when either token is missing, so callers can fall
+        through to a full login rather than continue with a half-set pair.
+        """
+        access_token = data.get("accessToken")
+        refresh_token = data.get("refreshToken")
+        if not access_token or not refresh_token:
+            _LOGGER.debug("Token response missing accessToken or refreshToken")
+            return False
+
+        self.jwt_token = access_token
+        self.refresh_token = refresh_token
+        self.access_token_expire = data.get("accessTokenExpire")
+        return True
+
+    async def refresh_access_token(self):
+        """Exchange the stored refresh token for a fresh access token.
+
+        Cheaper than a full login and avoids replaying the password on every
+        token expiry. Returns False on any failure so the caller can fall back
+        to login() — including when the endpoint is unavailable entirely.
+        """
+        if not self.refresh_token:
+            _LOGGER.debug("Cannot refresh: no refresh token stored")
+            return False
+
+        endpoint = "auth/auth/refresh"
+        headers = self._get_headers()
+        try:
+            async with self.session.post(
+                self.base_url + endpoint,
+                json={"refreshToken": self.refresh_token},
+                headers=headers,
+            ) as response:
+                if response.status != 200:
+                    _LOGGER.debug(
+                        "Token refresh failed with status code %d", response.status
+                    )
+                    return False
+
+                return self._store_tokens(await response.json())
+
+        except (ClientResponseError, ClientError) as error:
+            return await self.handle_client_error(endpoint, headers, error)
+
+    async def _reauthenticate(self):
+        """Get a usable access token again after a 401.
+
+        Tries the refresh token first and falls back to a full login, which is
+        what the integration did exclusively before refresh support existed —
+        so behaviour is unchanged if the refresh endpoint ever stops working.
+        """
+        if self.refresh_token:
+            if await self.refresh_access_token():
+                _LOGGER.debug("Access token refreshed")
+                return True
+            _LOGGER.debug("Refresh token rejected, falling back to full login")
+
+        return await self.login()
+
+    async def _get(self, endpoint, retry_auth=True):
         """Helper method to perform GET requests."""
         headers = {}
         try:
@@ -138,6 +201,15 @@ class LKSystemsManager:
             async with self.session.get(
                 self.base_url + endpoint, headers=headers
             ) as response:
+                # An expired access token is recoverable: re-authenticate and
+                # replay the request once. retry_auth guards against looping
+                # when the fresh token is rejected too.
+                if response.status == 401 and retry_auth:
+                    _LOGGER.debug("GET %s returned 401, re-authenticating", endpoint)
+                    if not await self._reauthenticate():
+                        return False, None
+                    return await self._get(endpoint, retry_auth=False)
+
                 response.raise_for_status()
                 if response.status == 200:
                     res = await response.json()
@@ -154,7 +226,7 @@ class LKSystemsManager:
         except (ClientResponseError, ClientError) as error:
             return (await self.handle_client_error(endpoint, headers, error)), None
 
-    async def _post(self, endpoint, payload):
+    async def _post(self, endpoint, payload, retry_auth=True):
         """Helper method to perform POST requests."""
         headers = {}
         try:
@@ -167,6 +239,13 @@ class LKSystemsManager:
             async with self.session.post(
                 self.base_url + endpoint, json=payload, headers=headers
             ) as response:
+                # See _get: recover from an expired token exactly once.
+                if response.status == 401 and retry_auth:
+                    _LOGGER.debug("POST %s returned 401, re-authenticating", endpoint)
+                    if not await self._reauthenticate():
+                        return False, None
+                    return await self._post(endpoint, payload, retry_auth=False)
+
                 response.raise_for_status()
                 if response.status in [200, 201]:
                     res = await response.json(content_type=None)
@@ -196,8 +275,9 @@ class LKSystemsManager:
             ) as response:
                 data = await response.json()
                 if response.status == 200:
-                    self.jwt_token = data.get("accessToken")
-                    self.refresh_token = data.get("refreshToken")
+                    if not self._store_tokens(data):
+                        _LOGGER.error("Login response did not contain a token pair")
+                        return False
                     # Get userId
                     headers = {
                         **self._get_headers(),
@@ -220,6 +300,11 @@ class LKSystemsManager:
                         return False
 
                 if response.status == 401:
+                    # Drop the stale pair so a later 401 does not retry a
+                    # refresh token the server has already rejected.
+                    self.jwt_token = None
+                    self.refresh_token = None
+                    self.access_token_expire = None
                     _LOGGER.error(
                         "Unauthorized: Check your LK Systems authentication credentials"
                     )
