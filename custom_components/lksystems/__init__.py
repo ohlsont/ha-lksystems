@@ -29,6 +29,7 @@ import voluptuous as vol
 
 from .const import CONF_UPDATE_INTERVAL, DEFAULT_UPDATE_INTERVAL, DOMAIN
 from .pylksystems import (
+    InvalidAuth,
     LKSystemsError,
     LKSystemsManager,
     LKThresholds,
@@ -287,6 +288,26 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             _LOGGER.error("Failed to set temperature: %s", ex)
             return False
 
+    def _persist_tokens(self, lk_inst) -> None:
+        """Store the manager's current tokens for the next update cycle.
+
+        Registered as the manager's on_tokens_updated callback, so it runs on
+        both login and refresh. userid is only set by login, so an existing
+        value is kept rather than overwritten with None on a refresh.
+        """
+        if not lk_inst.jwt_token:
+            return
+
+        previous = TOKEN_STORAGE.get(self._entry_id, {})
+        # Prefer the server's stated lifetime over assuming an hour.
+        lifetime = lk_inst.access_token_expire or 3600
+        TOKEN_STORAGE[self._entry_id] = {
+            "jwt": lk_inst.jwt_token,
+            "refresh": lk_inst.refresh_token,
+            "expiry": dt_util.utcnow().timestamp() + lifetime,
+            "userid": lk_inst.userid or previous.get("userid"),
+        }
+
     async def force_device_update(self, device_id: str) -> bool:
         """Force update for a specific device from API."""
         _LOGGER.warning("FORCE UPDATE REQUESTED for device %s", device_id)
@@ -297,6 +318,8 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             password = self._entry.data.get(CONF_PASSWORD)
 
             async with LKSystemsManager(username, password) as lk_inst:
+                lk_inst.on_tokens_updated = self._persist_tokens
+
                 # Use existing token if available
                 stored_tokens = TOKEN_STORAGE.get(self._entry_id, {})
                 stored_jwt = stored_tokens.get("jwt")
@@ -304,18 +327,10 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                 if stored_jwt and is_token_valid(stored_jwt):
                     lk_inst.jwt_token = stored_jwt
                     lk_inst.refresh_token = stored_tokens.get("refresh")
-                else:
-                    # Login if no valid token
-                    if not await lk_inst.login():
-                        _LOGGER.error("Login failed when forcing device update")
-                        return False
-
-                    # Store the new tokens
-                    TOKEN_STORAGE[self._entry_id] = {
-                        "jwt": lk_inst.jwt_token,
-                        "refresh": lk_inst.refresh_token,
-                        "expiry": dt_util.utcnow().timestamp() + 3600,
-                    }
+                elif not await lk_inst.login():
+                    # _persist_tokens stores the pair on success.
+                    _LOGGER.error("Login failed when forcing device update")
+                    return False
 
                 # Always force update for this device
                 success = await lk_inst.get_device_measurement(
@@ -410,6 +425,12 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
             stored_jwt = stored_tokens.get("jwt")
 
             async with LKSystemsManager(username, password) as lk_inst:
+                # Persist tokens the moment they change. The manager is
+                # recreated every cycle, so a token rotated mid-update by the
+                # refresh path would otherwise be discarded and the same stale
+                # JWT reloaded next time.
+                lk_inst.on_tokens_updated = self._persist_tokens
+
                 # Set the token if we have it and it's valid
                 if stored_jwt and is_token_valid(stored_jwt):
                     _LOGGER.info("Using existing JWT token - skipping login")
@@ -422,14 +443,6 @@ class LKSystemCoordinator(DataUpdateCoordinator[LkStructureResp]):
                         _LOGGER.error("Login failed")
                         raise ConfigEntryAuthFailed("Authentication failed")
 
-                    # Store the new tokens
-                    TOKEN_STORAGE[self._entry_id] = {
-                        "jwt": lk_inst.jwt_token,
-                        "refresh": lk_inst.refresh_token,
-                        "expiry": dt_util.utcnow().timestamp()
-                        + 3600,  # Assume 1 hour validity
-                        "userid": lk_inst.userid,
-                    }
                     _LOGGER.info("New tokens obtained and stored")
 
                 # Step 2: Get user structure with device information
@@ -869,10 +882,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: LKConfigEntry) -> bool:
 
 class LksystemsError(HomeAssistantError):
     """Base error."""
-
-
-class InvalidAuth(LksystemsError):
-    """Raised when invalid authentication credentials are provided."""
 
 
 class APIRatelimitExceeded(LksystemsError):

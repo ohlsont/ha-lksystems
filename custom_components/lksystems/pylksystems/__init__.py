@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 import logging
 from typing import TypedDict
@@ -85,6 +86,11 @@ class LKSystemsManager:
         self.jwt_token = None
         self.refresh_token = None
         self.access_token_expire = None
+        # Set to True only when the server explicitly rejects the credentials,
+        # so a network blip is not mistaken for a bad password.
+        self._credentials_rejected = False
+        # Optional callback(manager) invoked whenever the token pair changes.
+        self.on_tokens_updated: Callable[[LKSystemsManager], None] | None = None
         self._cubic_secure_messurement = None
         self._user_structure = None
         self._cubic_secure_configuration = None
@@ -129,19 +135,37 @@ class LKSystemsManager:
     def _store_tokens(self, data):
         """Persist the token set returned by login or refresh.
 
-        Returns False when either token is missing, so callers can fall
-        through to a full login rather than continue with a half-set pair.
+        Only accessToken is required. A refresh endpoint that does not rotate
+        the refresh token is common, and login worked without one before
+        refresh support existed — demanding both would turn a usable response
+        into a hard auth failure.
         """
+        if not isinstance(data, dict):
+            _LOGGER.debug("Token response was not a JSON object")
+            return False
+
         access_token = data.get("accessToken")
-        refresh_token = data.get("refreshToken")
-        if not access_token or not refresh_token:
-            _LOGGER.debug("Token response missing accessToken or refreshToken")
+        if not access_token:
+            _LOGGER.debug("Token response missing accessToken")
             return False
 
         self.jwt_token = access_token
-        self.refresh_token = refresh_token
+        # Keep the current refresh token when the response does not rotate it.
+        self.refresh_token = data.get("refreshToken") or self.refresh_token
         self.access_token_expire = data.get("accessTokenExpire")
+        self._credentials_rejected = False
+
+        self._notify_tokens_updated()
         return True
+
+    def _notify_tokens_updated(self):
+        """Tell the caller the credentials changed so it can persist them.
+
+        The integration recreates this manager every update cycle, so tokens
+        rotated mid-cycle are lost unless they are written out as they change.
+        """
+        if self.on_tokens_updated is not None:
+            self.on_tokens_updated(self)
 
     async def refresh_access_token(self):
         """Exchange the stored refresh token for a fresh access token.
@@ -170,8 +194,23 @@ class LKSystemsManager:
 
                 return self._store_tokens(await response.json())
 
-        except (ClientResponseError, ClientError) as error:
-            return await self.handle_client_error(endpoint, headers, error)
+        except (ClientResponseError, ClientError, ValueError) as error:
+            # ValueError covers a malformed JSON body. Logged at debug rather
+            # than error: the caller falls back to a full login, so a transient
+            # refresh failure is not something the user needs to see.
+            _LOGGER.debug("Token refresh failed: %s", error)
+            return False
+
+    def _raise_if_credentials_rejected(self):
+        """Escalate a definitively rejected login so a reauth flow can start.
+
+        Only raised when the server returned 401 for the credentials
+        themselves. A network failure leaves the flag clear and is reported as
+        an ordinary update failure, so a blip does not prompt the user to
+        re-enter a password that is still correct.
+        """
+        if self._credentials_rejected:
+            raise InvalidAuth("LK Systems rejected the stored credentials")
 
     async def _reauthenticate(self):
         """Get a usable access token again after a 401.
@@ -207,6 +246,7 @@ class LKSystemsManager:
                 if response.status == 401 and retry_auth:
                     _LOGGER.debug("GET %s returned 401, re-authenticating", endpoint)
                     if not await self._reauthenticate():
+                        self._raise_if_credentials_rejected()
                         return False, None
                     return await self._get(endpoint, retry_auth=False)
 
@@ -243,6 +283,7 @@ class LKSystemsManager:
                 if response.status == 401 and retry_auth:
                     _LOGGER.debug("POST %s returned 401, re-authenticating", endpoint)
                     if not await self._reauthenticate():
+                        self._raise_if_credentials_rejected()
                         return False, None
                     return await self._post(endpoint, payload, retry_auth=False)
 
@@ -290,6 +331,9 @@ class LKSystemsManager:
                         if responseUserid.status == 200:
                             useridJson = await responseUserid.json()
                             self.userid = useridJson["userId"]
+                            # Notify again: _store_tokens fired before userid
+                            # was known, so the first callback carried None.
+                            self._notify_tokens_updated()
                             return True
 
                         _LOGGER.error(
@@ -305,6 +349,7 @@ class LKSystemsManager:
                     self.jwt_token = None
                     self.refresh_token = None
                     self.access_token_expire = None
+                    self._credentials_rejected = True
                     _LOGGER.error(
                         "Unauthorized: Check your LK Systems authentication credentials"
                     )
